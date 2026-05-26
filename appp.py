@@ -1,5 +1,4 @@
 import io
-#pip install streamlit streamlit-folium folium transformers torch torchvision Pillow numpy requests matplotlib
 import math
 import warnings
 warnings.filterwarnings("ignore")
@@ -250,13 +249,32 @@ def heatmap_overlay(base: Image.Image, heatmap: np.ndarray,
     return overlay
 
 
-def crop_localized(base: Image.Image, bbox_grid, g: int) -> Image.Image:
+def crop_localized(base: Image.Image, bbox_grid, g: int,
+                   ref_img: Image.Image = None) -> Image.Image:
     W, H = base.size
     rmin, rmax, cmin, cmax = bbox_grid
-    x1 = max(0, int(cmin / g * W) - 12)
-    y1 = max(0, int(rmin / g * H) - 12)
-    x2 = min(W, int((cmax + 1) / g * W) + 12)
-    y2 = min(H, int((rmax + 1) / g * H) + 12)
+
+    cx = int(((cmin + cmax + 1) / 2) / g * W)
+    cy = int(((rmin + rmax + 1) / 2) / g * H)
+
+    if ref_img is not None:
+        rw, rh = ref_img.size
+        # crop is ~1.6x ref area in each axis — always bigger than ref, never the whole map
+        linear_scale = 1.265  # sqrt(1.6) — makes crop area ~1.6x the ref area
+        crop_w = int(min(rw * linear_scale, W * 0.55))
+        crop_h = int(min(rh * linear_scale, H * 0.55))
+    else:
+        crop_w = W // 4
+        crop_h = H // 4
+
+    x1 = max(0, cx - crop_w // 2)
+    y1 = max(0, cy - crop_h // 2)
+    x2 = min(W, x1 + crop_w)
+    y2 = min(H, y1 + crop_h)
+    if x2 == W:
+        x1 = max(0, W - crop_w)
+    if y2 == H:
+        y1 = max(0, H - crop_h)
     return base.crop((x1, y1, x2, y2))
 
 
@@ -449,7 +467,8 @@ with col_right:
                     st.session_state.map_image, heatmap, bbox_grid
                 )
                 st.session_state.cropped = crop_localized(
-                    st.session_state.map_image, bbox_grid, heatmap.shape[0]
+                    st.session_state.map_image, bbox_grid, heatmap.shape[0],
+                    ref_img=st.session_state.ref_image
                 )
 
                 update(100, f"✅  Done in {elapsed()}", "results below")
