@@ -1,4 +1,5 @@
 import io
+#pip install streamlit streamlit-folium folium transformers torch torchvision Pillow numpy requests matplotlib
 import math
 import warnings
 warnings.filterwarnings("ignore")
