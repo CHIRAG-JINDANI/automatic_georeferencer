@@ -330,7 +330,7 @@ with col_left:
         control=True,
         opacity=0.0,
     ).add_to(m)
-    Draw(
+    draw_ctrl = Draw(
         draw_options={
             "rectangle": {"shapeOptions": {"color": "#00dcff", "weight": 2}},
             "polygon": False,
@@ -339,8 +339,40 @@ with col_left:
             "marker": False,
             "polyline": False,
         },
-        edit_options={"edit": False, "remove": True},
-    ).add_to(m)
+        edit_options={"edit": False, "remove": False},
+    )
+    draw_ctrl.add_to(m)
+
+    # JS: after a rectangle is finished —
+    #   1. remove every previously drawn shape so only one bbox exists at a time
+    #   2. disable the active draw handler so no second rectangle starts automatically
+    _dv  = draw_ctrl.get_name()           # e.g. "draw_control_abc123"
+    _div = f"drawnItems_{_dv}"            # matching featureGroup name
+    _fix = folium.Element(f"""
+    <script>
+    (function waitForDraw() {{
+        var dc = window['{_dv}'];
+        var di = window['{_div}'];
+        if (!dc || !di || !di._map) {{ setTimeout(waitForDraw, 250); return; }}
+        di._map.on('draw:created', function () {{
+            // keep only the newest shape — remove everything drawn before it
+            var layers = [];
+            di.eachLayer(function (l) {{ layers.push(l); }});
+            layers.slice(0, -1).forEach(function (l) {{ di.removeLayer(l); }});
+            // exit draw mode so no second rectangle begins
+            setTimeout(function () {{
+                for (var k in dc._toolbars) {{
+                    var tb = dc._toolbars[k];
+                    if (tb && tb._activeMode) {{
+                        tb._activeMode.handler.disable();
+                    }}
+                }}
+            }}, 60);
+        }});
+    }})();
+    </script>
+    """)
+    m.get_root().html.add_child(_fix)
 
     map_data = st_folium(m, width="100%", height=480, returned_objects=["last_active_drawing"])
 
