@@ -1,0 +1,142 @@
+import cv2
+import numpy as np
+from google.colab import files
+import matplotlib.pyplot as plt
+
+def pbar(lbl, curr, total):
+    pass
+
+def show_pair(title, img1, img2):
+    fig, axes = plt.subplots(1, 2, figsize=(10, 5))
+    fig.suptitle(title)
+    axes[0].imshow(img1)
+    axes[0].axis('off')
+    axes[1].imshow(img2)
+    axes[1].axis('off')
+    plt.show()
+
+uploaded1 = files.upload()
+name1 = list(uploaded1.keys())[0]
+img1_bgr = cv2.imdecode(np.frombuffer(uploaded1[name1], np.uint8), cv2.IMREAD_COLOR)
+
+uploaded2 = files.upload()
+name2 = list(uploaded2.keys())[0]
+img2_bgr = cv2.imdecode(np.frombuffer(uploaded2[name2], np.uint8), cv2.IMREAD_COLOR)
+
+print('=' * 52)
+print('  COMBO 1 - CLAHE + BILATERAL FILTER')
+print('  CLAHE boosts contrast -> Bilateral denoises')
+print('  while preserving edges for keypoint detection.')
+print('=' * 52)
+
+def apply_clahe_bilateral(img, lbl):
+    pbar(f'{lbl}: bgr -> lab', 1, 8)
+    lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB)
+    pbar(f'{lbl}: split l,a,b channels', 2, 8)
+    l, a, b = cv2.split(lab)
+    pbar(f'{lbl}: clahe object', 3, 8)
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+    pbar(f'{lbl}: apply clahe', 4, 8)
+    l_eq = clahe.apply(l)
+    pbar(f'{lbl}: merge', 5, 8)
+    clahe_out = cv2.cvtColor(cv2.merge([l_eq, a, b]), cv2.COLOR_LAB2BGR)
+    pbar(f'{lbl}: bilateral filter', 6, 8)
+    result = cv2.bilateralFilter(clahe_out, d=9, sigmaColor=75, sigmaSpace=75)
+    pbar(f'{lbl}: packing result', 7, 8)
+    pbar(f'{lbl}: done', 8, 8)
+    return result
+
+cb1 = apply_clahe_bilateral(img1_bgr, 'img1')
+cb2 = apply_clahe_bilateral(img2_bgr, 'img2')
+
+print('  CLAHE + Bilateral done - showing results')
+show_pair('Combo #1: CLAHE + Bilateral Filter',
+          cv2.cvtColor(cb1, cv2.COLOR_BGR2RGB),
+          cv2.cvtColor(cb2, cv2.COLOR_BGR2RGB))
+
+##################################################
+##################################################
+##################################################
+
+import cv2
+import numpy as np
+import matplotlib.cm as cm
+from google.colab import files
+
+def get_grid_kp(img):
+    h, w = img.shape[:2]
+    r = 4
+    c = 4
+    min_k = 15
+    dh = h // r
+    dw = w // c
+    s1 = cv2.SIFT_create(contrastThreshold=0.04)
+    s2 = cv2.SIFT_create(contrastThreshold=0.01)
+    kps = []
+    for i in range(r):
+        for j in range(c):
+            y1 = i * dh
+            y2 = h if i == r - 1 else (i + 1) * dh
+            x1 = j * dw
+            x2 = w if j == c - 1 else (j + 1) * dw
+            roi = img[y1:y2, x1:x2]
+            k = s1.detect(roi, None)
+            if len(k) < min_k:
+                k = s2.detect(roi, None)
+            for p in k:
+                p.pt = (p.pt[0] + x1, p.pt[1] + y1)
+                kps.append(p)
+    return kps
+
+sift = cv2.SIFT_create()
+kp1 = get_grid_kp(cb1)
+kp1, des1 = sift.compute(cb1, kp1)
+kp2 = get_grid_kp(cb2)
+kp2, des2 = sift.compute(cb2, kp2)
+
+bf = cv2.BFMatcher(cv2.NORM_L2)
+matches = bf.knnMatch(des1, des2, k=2)
+
+good = []
+for m, n in matches:
+    if m.distance < 0.75 * n.distance:
+        good.append(m)
+
+if len(good) >= 4:
+    src_pts = np.float32([kp1[m.queryIdx].pt for m in good]).reshape(-1, 1, 2)
+    dst_pts = np.float32([kp2[m.trainIdx].pt for m in good]).reshape(-1, 1, 2)
+    matrix, mask = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC, 5.0)
+    matches_mask = mask.ravel().tolist()
+    inliers = [good[i] for i in range(len(good)) if matches_mask[i] == 1]
+    
+    num = len(inliers)
+    colors = cm.hsv(np.linspace(0, 1, num))
+    colors_bgr = [(int(c[2] * 255), int(c[1] * 255), int(c[0] * 255)) for c in colors]
+    
+    out1 = cb1.copy()
+    out2 = cb2.copy()
+    
+    for i in range(num):
+        match = inliers[i]
+        pt1 = tuple(np.round(kp1[match.queryIdx].pt).astype(int))
+        pt2 = tuple(np.round(kp2[match.trainIdx].pt).astype(int))
+        color = colors_bgr[i]
+        cv2.circle(out1, pt1, 6, color, -1)
+        cv2.circle(out2, pt2, 6, color, -1)
+        
+    h1, w1 = out1.shape[:2]
+    h2, w2 = out2.shape[:2]
+    
+    if h1 != h2:
+        out2_res = cv2.resize(out2, (int(w2 * h1 / h2), h1))
+        comp = np.hstack((out1, out2_res))
+    else:
+        comp = np.hstack((out1, out2))
+        
+    cv2.imwrite("output1.jpg", out1)
+    cv2.imwrite("output2.jpg", out2)
+    cv2.imwrite("comparison.jpg", comp)
+    
+    files.download("output1.jpg")
+    files.download("output2.jpg")
+    files.download("comparison.jpg")
