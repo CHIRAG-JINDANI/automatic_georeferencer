@@ -146,3 +146,78 @@ if len(good) >= 4:
     files.download("output2.jpg")
     files.download("comparison.jpg")
 
+////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////
+import cv2
+import numpy as np
+import matplotlib.pyplot as plt
+from google.colab import files
+
+# ==========================================
+# STEP 1: Apply the "Stretch" (Warping)
+# ==========================================
+h1, w1 = cb1.shape[:2]
+h2, w2 = cb2.shape[:2]
+
+# We take the zoomed-in image (cb1) and warp it using our homography matrix.
+# We set the output canvas size to match the zoomed-out satellite image (w2, h2).
+warped_cb1 = cv2.warpPerspective(cb1, matrix, (w2, h2))
+
+# ==========================================
+# STEP 2: The "Overlay" (Blending)
+# ==========================================
+# The warped image will have a lot of black empty space around it.
+# We need to create a mask to tell the computer to only keep the actual pixels of the photo.
+gray_warped = cv2.cvtColor(warped_cb1, cv2.COLOR_BGR2GRAY)
+_, mask = cv2.threshold(gray_warped, 1, 255, cv2.THRESH_BINARY)
+mask_inv = cv2.bitwise_not(mask)
+
+# We carve out a black hole in the satellite image exactly where our new piece will go
+bg = cv2.bitwise_and(cb2, cb2, mask=mask_inv)
+
+# We paste the warped piece into that hole to create the clean mosaic
+merged_clean = cv2.add(bg, warped_cb1)
+
+# ==========================================
+# STEP 3: The "Verified" Visualization
+# ==========================================
+merged_visualized = merged_clean.copy()
+
+# 1. Draw a green box around the pasted image so you can clearly see its exact footprint
+pts = np.float32([[0, 0], [0, h1 - 1], [w1 - 1, h1 - 1], [w1 - 1, 0]]).reshape(-1, 1, 2)
+dst_corners = cv2.perspectiveTransform(pts, matrix)
+cv2.polylines(merged_visualized, [np.int32(dst_corners)], True, (0, 255, 0), 3, cv2.LINE_AA)
+
+# 2. Draw the keypoints that anchored this transformation.
+# Since the images are now stitched, the matching points from both images sit on top of each other.
+# We will draw red dots exactly where those matching anchors landed.
+for i in range(len(good)):
+    if matches_mask[i] == 1:
+        match = good[i]
+        # We use kp2 (the satellite image keypoints) because that's our base map
+        pt = tuple(np.round(kp2[match.trainIdx].pt).astype(int))
+        cv2.circle(merged_visualized, pt, 4, (0, 0, 255), -1)
+
+# ==========================================
+# STEP 4: Display and Download
+# ==========================================
+print("Stitching complete! Displaying results...")
+
+fig, axes = plt.subplots(1, 2, figsize=(15, 7))
+axes[0].imshow(cv2.cvtColor(merged_clean, cv2.COLOR_BGR2RGB))
+axes[0].set_title('Output 1: Clean Stitched Mosaic')
+axes[0].axis('off')
+
+axes[1].imshow(cv2.cvtColor(merged_visualized, cv2.COLOR_BGR2RGB))
+axes[1].set_title('Output 2: Verified (Keypoints + Boundary)')
+axes[1].axis('off')
+plt.show()
+
+# Save the files to Colab's disk
+cv2.imwrite("merged_clean.jpg", merged_clean)
+cv2.imwrite("merged_visualized.jpg", merged_visualized)
+
+# Automatically trigger the downloads to your computer
+files.download("merged_clean.jpg")
+files.download("merged_visualized.jpg")
